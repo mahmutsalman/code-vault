@@ -797,7 +797,6 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
     if (tagMode) {
       renderSnippets(allSnippets);
       searchInput.focus();
-      showTagSuggestions('');
     } else {
       doSearch();
     }
@@ -808,6 +807,7 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
   // ──────────────────────────────────────────
   function showTagSuggestions(query) {
     const q = query.toLowerCase().trim();
+    if (!q) { hideTagSuggestions(); return; }
     const filtered = allTags.filter(({ tag }) =>
       (!q || tag.includes(q)) && !activeFilters.includes(tag)
     );
@@ -842,8 +842,6 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
     addFilter(tag);
     searchInput.value = '';
     hideTagSuggestions();
-    // re-show all remaining unselected tags
-    showTagSuggestions('');
   }
 
   function navigateSuggestions(dir) {
@@ -863,7 +861,7 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
   let searchTimer = null;
 
   searchInput.addEventListener('focus', () => {
-    if (tagMode) { showTagSuggestions(searchInput.value); }
+    if (tagMode && searchInput.value.trim().length > 0) { showTagSuggestions(searchInput.value); }
   });
 
   searchInput.addEventListener('input', () => {
@@ -930,7 +928,7 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
   function removeFilter(tag) {
     activeFilters = activeFilters.filter(t => t !== tag);
     renderFilters();
-    if (tagMode) { showTagSuggestions(searchInput.value); }
+    if (tagMode && searchInput.value.trim().length > 0) { showTagSuggestions(searchInput.value); }
     doSearch();
   }
 
