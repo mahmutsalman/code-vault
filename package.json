@@ -1,0 +1,72 @@
+{
+  "name": "code-vault",
+  "displayName": "Code Vault",
+  "description": "Save, tag, and search your code snippets across all projects with git versioning",
+  "version": "1.0.0",
+  "publisher": "mahmut-salman",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mahmut-salman/code-vault"
+  },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": ["Other"],
+
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "code-vault",
+          "title": "Code Vault",
+          "icon": "media/vault.svg"
+        }
+      ]
+    },
+    "views": {
+      "code-vault": [
+        {
+          "type": "webview",
+          "id": "codeVault.mainView",
+          "name": "Snippets"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codeVault.addSnippet",
+        "title": "Code Vault: Add Selection as Snippet"
+      },
+      {
+        "command": "codeVault.addRelatedClass",
+        "title": "Code Vault: Add Current File as Related Class"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codeVault.addSnippet",
+          "when": "editorHasSelection",
+          "group": "codeVault@1"
+        },
+        {
+          "command": "codeVault.addRelatedClass",
+          "group": "codeVault@2"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.74.0",
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^2.0.0"
+  }
+}
