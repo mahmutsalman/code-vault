@@ -634,14 +634,82 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
   .refresh-btn:hover { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); }
   .refresh-btn.spinning { animation: spin 0.5s linear; }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .mode-toggle {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid var(--vscode-input-border, #444);
+    color: var(--vscode-descriptionForeground);
+    border-radius: 3px;
+    padding: 3px 7px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    line-height: 1.4;
+    letter-spacing: 0.03em;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .mode-toggle:hover { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); }
+  .mode-toggle.tag-active {
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    border-color: var(--vscode-badge-background);
+  }
+  .search-wrapper {
+    position: relative;
+  }
+  .tag-suggestions {
+    position: absolute;
+    top: calc(100% + 3px);
+    left: 0;
+    right: 0;
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-focusBorder);
+    border-radius: 3px;
+    max-height: 180px;
+    overflow-y: auto;
+    z-index: 200;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .tag-suggestions.hidden { display: none; }
+  .tag-sugg-item {
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--vscode-foreground);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .tag-sugg-item:hover,
+  .tag-sugg-item.active {
+    background: var(--vscode-list-hoverBackground);
+    color: var(--vscode-textLink-foreground);
+  }
+  .tag-sugg-count {
+    margin-left: auto;
+    font-size: 10px;
+    opacity: 0.5;
+  }
+  .mode-indicator {
+    padding: 2px 8px 4px;
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+    opacity: 0.6;
+    text-align: right;
+  }
 </style>
 </head>
 <body>
 <div class="search-bar">
   <div class="search-row">
-    <input class="search-input" id="searchInput" type="text" placeholder="Search snippets or paste #tag..." autocomplete="off" />
+    <div class="search-wrapper" style="flex:1;position:relative;">
+      <input class="search-input" id="searchInput" type="text" placeholder="Search snippets or paste #tag..." autocomplete="off" style="width:100%;" />
+      <div class="tag-suggestions hidden" id="tagSuggestions"></div>
+    </div>
+    <button class="mode-toggle" id="modeToggle" title="Toggle tag search mode">#</button>
     <button class="refresh-btn" id="refreshBtn" title="Refresh snippets">↻</button>
   </div>
+  <div class="mode-indicator hidden" id="modeIndicator">tag search mode — type to filter tags</div>
 </div>
 <div class="tag-filters" id="tagFilters"></div>
 <div class="snippets-list" id="snippetsList"></div>
@@ -700,6 +768,93 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
   let activeFilters = [];
   let addPendingTags = [];
   let selectedLinkSnippetId = null;
+  let tagMode = false;
+  let allTags = [];
+  let activeSuggIndex = -1;
+
+  // ──────────────────────────────────────────
+  // TAG EXTRACTION
+  // ──────────────────────────────────────────
+  function rebuildTagList(snippets) {
+    const counts = {};
+    snippets.forEach(s => s.tags.forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
+    allTags = Object.keys(counts).sort().map(t => ({ tag: t, count: counts[t] }));
+  }
+
+  // ──────────────────────────────────────────
+  // MODE TOGGLE
+  // ──────────────────────────────────────────
+  const modeToggle = document.getElementById('modeToggle');
+  const modeIndicator = document.getElementById('modeIndicator');
+
+  modeToggle.addEventListener('click', () => {
+    tagMode = !tagMode;
+    modeToggle.classList.toggle('tag-active', tagMode);
+    modeIndicator.classList.toggle('hidden', !tagMode);
+    searchInput.placeholder = tagMode ? 'Type to search tags...' : 'Search snippets or paste #tag...';
+    searchInput.value = '';
+    hideTagSuggestions();
+    if (tagMode) {
+      renderSnippets(allSnippets);
+      searchInput.focus();
+      showTagSuggestions('');
+    } else {
+      doSearch();
+    }
+  });
+
+  // ──────────────────────────────────────────
+  // TAG SUGGESTIONS
+  // ──────────────────────────────────────────
+  function showTagSuggestions(query) {
+    const q = query.toLowerCase().trim();
+    const filtered = allTags.filter(({ tag }) =>
+      (!q || tag.includes(q)) && !activeFilters.includes(tag)
+    );
+    const box = document.getElementById('tagSuggestions');
+    if (filtered.length === 0) {
+      box.classList.add('hidden');
+      return;
+    }
+    activeSuggIndex = -1;
+    box.innerHTML = filtered.map(({ tag, count }) =>
+      '<div class="tag-sugg-item" data-tag="' + esc(tag) + '">' +
+        '#' + esc(tag) +
+        '<span class="tag-sugg-count">' + count + '</span>' +
+      '</div>'
+    ).join('');
+    box.querySelectorAll('.tag-sugg-item').forEach(item => {
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        commitTagSuggestion(item.dataset.tag);
+      });
+    });
+    box.classList.remove('hidden');
+  }
+
+  function hideTagSuggestions() {
+    const box = document.getElementById('tagSuggestions');
+    box.classList.add('hidden');
+    activeSuggIndex = -1;
+  }
+
+  function commitTagSuggestion(tag) {
+    addFilter(tag);
+    searchInput.value = '';
+    hideTagSuggestions();
+    // re-show all remaining unselected tags
+    showTagSuggestions('');
+  }
+
+  function navigateSuggestions(dir) {
+    const box = document.getElementById('tagSuggestions');
+    const items = box.querySelectorAll('.tag-sugg-item');
+    if (!items.length) { return; }
+    if (activeSuggIndex >= 0) { items[activeSuggIndex].classList.remove('active'); }
+    activeSuggIndex = Math.max(0, Math.min(items.length - 1, activeSuggIndex + dir));
+    items[activeSuggIndex].classList.add('active');
+    items[activeSuggIndex].scrollIntoView({ block: 'nearest' });
+  }
 
   // ──────────────────────────────────────────
   // SEARCH
@@ -707,7 +862,15 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
   const searchInput = document.getElementById('searchInput');
   let searchTimer = null;
 
+  searchInput.addEventListener('focus', () => {
+    if (tagMode) { showTagSuggestions(searchInput.value); }
+  });
+
   searchInput.addEventListener('input', () => {
+    if (tagMode) {
+      showTagSuggestions(searchInput.value);
+      return;
+    }
     clearTimeout(searchTimer);
     const val = searchInput.value;
     if (val.startsWith('#')) {
@@ -722,6 +885,24 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
   });
 
   searchInput.addEventListener('keydown', e => {
+    if (tagMode) {
+      if (e.key === 'ArrowDown') { navigateSuggestions(1); e.preventDefault(); return; }
+      if (e.key === 'ArrowUp')   { navigateSuggestions(-1); e.preventDefault(); return; }
+      if (e.key === 'Escape')    { hideTagSuggestions(); searchInput.value = ''; return; }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const box = document.getElementById('tagSuggestions');
+        const active = box.querySelector('.tag-sugg-item.active');
+        if (active) {
+          commitTagSuggestion(active.dataset.tag);
+        } else {
+          const val = searchInput.value.trim().toLowerCase().replace(/\\s+/g, '-');
+          if (val) { commitTagSuggestion(val); }
+        }
+        return;
+      }
+      return;
+    }
     if (e.key === 'Enter') {
       const val = searchInput.value;
       if (val.startsWith('#')) {
@@ -731,6 +912,11 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
         doSearch();
       }
     }
+  });
+
+  searchInput.addEventListener('blur', () => {
+    // small delay so mousedown on suggestion fires first
+    setTimeout(() => hideTagSuggestions(), 150);
   });
 
   function addFilter(tag) {
@@ -744,6 +930,7 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
   function removeFilter(tag) {
     activeFilters = activeFilters.filter(t => t !== tag);
     renderFilters();
+    if (tagMode) { showTagSuggestions(searchInput.value); }
     doSearch();
   }
 
@@ -758,7 +945,7 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
   }
 
   function doSearch() {
-    const query = searchInput.value.trim();
+    const query = tagMode ? '' : searchInput.value.trim();
     if (!query && activeFilters.length === 0) {
       renderSnippets(allSnippets);
       return;
@@ -1080,6 +1267,7 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
     switch (msg.type) {
       case 'allSnippets':
         allSnippets = msg.snippets;
+        rebuildTagList(allSnippets);
         renderSnippets(allSnippets);
         break;
       case 'searchResults':
@@ -1093,7 +1281,7 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
         break;
       case 'snippetSaved':
         allSnippets.unshift(msg.snippet);
-        renderSnippets(searchInput.value || activeFilters.length ? null : allSnippets);
+        rebuildTagList(allSnippets);
         if (!searchInput.value && activeFilters.length === 0) {
           renderSnippets(allSnippets);
         } else {
@@ -1102,14 +1290,16 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
         break;
       case 'snippetUpdated':
         allSnippets = allSnippets.map(s => s.id === msg.snippet.id ? msg.snippet : s);
-        renderSnippets(searchInput.value || activeFilters.length ? allSnippets.filter(s => s.id === msg.snippet.id || true) : allSnippets);
-        doSearch();
+        rebuildTagList(allSnippets);
         if (!searchInput.value && activeFilters.length === 0) {
           renderSnippets(allSnippets);
+        } else {
+          doSearch();
         }
         break;
       case 'snippetDeleted':
         allSnippets = allSnippets.filter(s => s.id !== msg.id);
+        rebuildTagList(allSnippets);
         if (!searchInput.value && activeFilters.length === 0) {
           renderSnippets(allSnippets);
         } else {
