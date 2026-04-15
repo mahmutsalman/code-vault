@@ -390,8 +390,32 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
     border: 1px dashed var(--vscode-input-border, #444);
   }
   .add-tag-inline:hover { border-color: var(--vscode-focusBorder); }
+  .related-section { margin-top: 5px; }
+  .related-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
+  }
+  .related-label {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+  .related-filter {
+    flex: 1;
+    font-size: 10px;
+    padding: 1px 5px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 2px;
+    outline: none;
+    min-width: 0;
+  }
+  .related-filter:focus { border-color: var(--vscode-focusBorder); }
   .related-classes {
-    margin-top: 4px;
     display: flex;
     flex-wrap: wrap;
     gap: 3px;
@@ -406,6 +430,7 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
     border: 1px solid var(--vscode-input-border, #444);
   }
   .related-chip:hover { color: var(--vscode-textLink-foreground); }
+  .related-chip.hidden { display: none; }
   .card-actions {
     display: none;
     margin-top: 5px;
@@ -589,11 +614,34 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
     outline: none;
     display: none;
   }
+  .search-row {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+  }
+  .search-row .search-input { flex: 1; }
+  .refresh-btn {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid var(--vscode-input-border, #444);
+    color: var(--vscode-descriptionForeground);
+    border-radius: 3px;
+    padding: 4px 7px;
+    font-size: 13px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .refresh-btn:hover { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); }
+  .refresh-btn.spinning { animation: spin 0.5s linear; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
 <div class="search-bar">
-  <input class="search-input" id="searchInput" type="text" placeholder="Search snippets or paste #tag..." autocomplete="off" />
+  <div class="search-row">
+    <input class="search-input" id="searchInput" type="text" placeholder="Search snippets or paste #tag..." autocomplete="off" />
+    <button class="refresh-btn" id="refreshBtn" title="Refresh snippets">↻</button>
+  </div>
 </div>
 <div class="tag-filters" id="tagFilters"></div>
 <div class="snippets-list" id="snippetsList"></div>
@@ -735,9 +783,25 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
     const tags = s.tags.map(t =>
       '<span class="tag-remove"><span class="tag-text" data-filter="' + esc(t) + '">#' + esc(t) + '</span><span class="x" data-snippet="' + s.id + '" data-tag="' + esc(t) + '">✕</span></span>'
     ).join('');
-    const related = s.relatedClasses.map(r =>
-      '<span class="related-chip" data-snippet="' + s.id + '" data-related="' + r.id + '">' + esc(r.fileName) + '</span>'
+
+    // sort related classes newest first
+    const sortedRelated = [...s.relatedClasses].sort(
+      (a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime()
+    );
+    const relatedChips = sortedRelated.map(r =>
+      '<span class="related-chip" data-snippet="' + s.id + '" data-related="' + r.id + '" data-name="' + esc(r.fileName.toLowerCase()) + '">' + esc(r.fileName) + '</span>'
     ).join('');
+
+    const relatedSection = sortedRelated.length > 0
+      ? '<div class="related-section">' +
+          '<div class="related-header">' +
+            '<span class="related-label">Related (' + sortedRelated.length + ')</span>' +
+            '<input class="related-filter" data-snippet="' + s.id + '" placeholder="filter classes..." />' +
+          '</div>' +
+          '<div class="related-classes" id="rc-' + s.id + '">' + relatedChips + '</div>' +
+        '</div>'
+      : '';
+
     const gitMeta = s.hasGit
       ? '<span class="git-ref">' + esc(s.gitBranch || '') + (s.gitCommit ? ' @' + s.gitCommit.slice(0,7) : '') + '</span>'
       : '<span class="no-git-warning">⚠ no git</span>';
@@ -755,7 +819,7 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
         tags +
         '<span class="add-tag-inline" data-snippet="' + s.id + '">+ tag</span>' +
       '</div>' +
-      (s.relatedClasses.length > 0 ? '<div class="related-classes">' + related + '</div>' : '') +
+      relatedSection +
       '<div class="card-actions">' +
         '<button class="action-btn" data-open="' + s.id + '">Open</button>' +
         '<button class="action-btn danger" data-delete="' + s.id + '">Delete</button>' +
@@ -805,7 +869,33 @@ export class VaultViewProvider implements vscode.WebviewViewProvider {
         vscode.postMessage({ type: 'openSnippet', id: snippetId });
       });
     });
+
+    // related-class filter inputs — stop card click propagation, filter chips live
+    document.querySelectorAll('.related-filter').forEach(input => {
+      input.addEventListener('click', e => e.stopPropagation());
+      input.addEventListener('input', e => {
+        const snippetId = input.dataset.snippet;
+        const q = input.value.toLowerCase().trim();
+        const container = document.getElementById('rc-' + snippetId);
+        if (!container) { return; }
+        container.querySelectorAll('.related-chip').forEach(chip => {
+          const name = chip.dataset.name || '';
+          chip.classList.toggle('hidden', q !== '' && !name.includes(q));
+        });
+      });
+      input.addEventListener('keydown', e => e.stopPropagation());
+    });
   }
+
+  // ──────────────────────────────────────────
+  // REFRESH BUTTON
+  // ──────────────────────────────────────────
+  document.getElementById('refreshBtn').addEventListener('click', () => {
+    const btn = document.getElementById('refreshBtn');
+    btn.classList.add('spinning');
+    setTimeout(() => btn.classList.remove('spinning'), 500);
+    vscode.postMessage({ type: 'ready' });
+  });
 
   // ──────────────────────────────────────────
   // INLINE TAG INPUT
